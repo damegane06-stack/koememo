@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>こえメモ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* レイアウト: 左に録音デスク(タイマー・メーター・リアルタイム文字起こし)、右に録音一覧。狭い画面では縦積み */
+:root {
+  --bg: #eef1f5;
+  --surface: #ffffff;
+  --ink: #17202c;
+  --muted: #5a6677;
+  --line: #d6dce5;
+  --rec: #d3342b;
+  --rec-soft: #fbe7e5;
+  --accent: #2351b8;
+  --accent-soft: #e4ebfa;
+  --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1218;
+    --surface: #161c25;
+    --ink: #e5e9ef;
+    --muted: #8d98a8;
+    --line: #2a323e;
+    --rec: #ff5d52;
+    --rec-soft: #3a1c1b;
+    --accent: #7da3ff;
+    --accent-soft: #1d2a45;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 20px; }
+header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: .02em; }
+h2 { font-size: 13px; margin: 0; letter-spacing: .12em; color: var(--muted); font-weight: 500; }
+.storage { font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+.grid { display: grid; gap: 20px; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); align-items: start; }
+@media (max-width: 820px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: grid; gap: 16px; min-width: 0; }
+
+/* 録音デスク */
+.tally { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; letter-spacing: .14em; font-family: var(--font-mono); color: var(--muted); }
+.tally i { width: 9px; height: 9px; border-radius: 50%; background: var(--line); }
+.tally.on { color: var(--rec); }
+.tally.on i { background: var(--rec); box-shadow: 0 0 0 4px var(--rec-soft); animation: blink 1.2s steps(2, start) infinite; }
+.tally.paused { color: var(--accent); }
+.tally.paused i { background: var(--accent); }
+@keyframes blink { to { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .tally.on i { animation: none; } }
+.timer { font-family: var(--font-mono); font-size: clamp(44px, 9vw, 64px); font-weight: 500; letter-spacing: .02em; line-height: 1; font-variant-numeric: tabular-nums; }
+canvas#meter { width: 100%; height: 56px; display: block; border-radius: 6px; background: var(--bg); }
+.controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 8px 14px; }
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: .45; cursor: default; }
+.btn-rec { background: var(--rec); border-color: var(--rec); color: #fff; font-weight: 700; padding: 12px 22px; font-size: 16px; display: inline-flex; align-items: center; gap: 10px; }
+.btn-rec:hover { border-color: var(--rec); filter: brightness(1.06); }
+.btn-rec .dot { width: 12px; height: 12px; border-radius: 50%; background: #fff; }
+.btn-rec.stop .dot { border-radius: 2px; }
+.opts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); align-items: center; }
+.opts label { display: inline-flex; gap: 6px; align-items: center; }
+select, input[type="search"], input.title { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+.live { border-top: 1px solid var(--line); padding-top: 14px; display: grid; gap: 8px; }
+.live-body { max-height: 300px; overflow-y: auto; display: grid; gap: 6px; font-size: 14px; }
+.note { font-size: 12.5px; color: var(--muted); }
+.note.warn { color: var(--rec); }
+.line { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; }
+.ts { font-family: var(--font-mono); font-size: 12px; color: var(--muted); padding-top: 2px; font-variant-numeric: tabular-nums; }
+button.ts { border: 0; background: none; padding: 2px 0 0; color: var(--accent); text-align: left; }
+.interim { color: var(--muted); font-style: italic; }
+
+/* 一覧 */
+.list-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.list { display: grid; gap: 10px; }
+.empty { color: var(--muted); font-size: 14px; padding: 18px; border: 1px dashed var(--line); border-radius: 8px; }
+details.item { border: 1px solid var(--line); border-radius: 8px; }
+details.item[open] { border-color: var(--muted); }
+details.item summary { list-style: none; cursor: pointer; padding: 12px 14px; display: grid; gap: 2px; }
+details.item summary::-webkit-details-marker { display: none; }
+.item-title { font-weight: 700; overflow-wrap: anywhere; }
+.item-meta { font-size: 12px; color: var(--muted); font-family: var(--font-mono); display: flex; gap: 12px; flex-wrap: wrap; }
+.badge { font-family: var(--font-body); background: var(--accent-soft); color: var(--accent); border-radius: 4px; padding: 0 6px; }
+.item-body { padding: 0 14px 14px; display: grid; gap: 12px; }
+audio { width: 100%; }
+input.title { width: 100%; font-weight: 700; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.actions button { font-size: 13px; padding: 6px 12px; }
+button.danger { color: var(--rec); }
+button.danger.armed { background: var(--rec); color: #fff; border-color: var(--rec); }
+.transcript { max-height: 320px; overflow-y: auto; display: grid; gap: 6px; font-size: 14px; background: var(--bg); border-radius: 6px; padding: 10px 12px; }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 8px 16px; border-radius: 8px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>こえメモ</h1>
+    <span class="storage" id="storage"></span>
+  </header>
+
+  <div class="grid">
+    <section class="panel" aria-label="録音">
+      <span class="tally" id="tally"><i></i><span id="tallyText">STANDBY</span></span>
+      <div class="timer" id="timer">00:00:00</div>
+      <canvas id="meter" aria-hidden="true"></canvas>
+      <div class="controls">
+        <button class="btn-rec" id="recBtn"><span class="dot"></span><span id="recLabel">録音開始</span></button>
+        <button id="pauseBtn" disabled>一時停止</button>
+      </div>
+      <div class="opts">
+        <label><input type="checkbox" id="srOn" checked> リアルタイム文字起こし</label>
+        <label>言語
+          <select id="lang">
+            <option value="ja-JP">日本語</option>
+            <option value="en-US">English</option>
+          </select>
+        </label>
+      </div>
+      <div class="live">
+        <h2>文字起こし</h2>
+        <div class="live-body" id="liveBody"></div>
+        <div class="interim" id="interim"></div>
+        <div class="note" id="srNote">録音を始めると、話した内容がここに表示されます。</div>
+      </div>
+    </section>
+
+    <section class="panel" aria-label="録音一覧">
+      <div class="list-head">
+        <h2>録音一覧</h2>
+        <input type="search" id="q" placeholder="タイトル・本文を検索">
+      </div>
+      <div class="list" id="list"></div>
+    </section>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const TIMESLICE = 5000;
+let db, rec = null, wakeLock = null, recordings = [];
+
+// ---------- IndexedDB ----------
+function openDB() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('koememo', 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      d.createObjectStore('recordings', { keyPath: 'id' });
+      d.createObjectStore('live', { keyPath: 'sid' });
+      d.createObjectStore('chunks', { autoIncrement: true }).createIndex('sid', 'sid');
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+function tx(store, mode, fn) {
+  return new Promise((res, rej) => {
+    const t = db.transaction(store, mode);
+    const req = fn(t.objectStore(store));
+    let out;
+    if (req) req.onsuccess = () => { out = req.result; };
+    t.oncomplete = () => res(out);
+    t.onerror = () => rej(t.error);
+  });
+}
+function chunksFor(sid) {
+  return tx('chunks', 'readonly', s => s.index('sid').getAll(sid));
+}
+function clearSession(sid) {
+  return Promise.all([
+    new Promise((res, rej) => {
+      const t = db.transaction('chunks', 'readwrite');
+      const cur = t.objectStore('chunks').index('sid').openCursor(sid);
+      cur.onsuccess = () => { const c = cur.result; if (c) { c.delete(); c.continue(); } };
+      t.oncomplete = res; t.onerror = () => rej(t.error);
+    }),
+    tx('live', 'readwrite', s => s.delete(sid)),
+  ]);
+}
+
+// ---------- 表示ヘルパー ----------
+const pad = n => String(n).padStart(2, '0');
+function fmt(ms, long = true) {
+  const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60;
+  return long || h ? `${pad(h)}:${pad(m)}:${pad(s % 60)}` : `${pad(m)}:${pad(s % 60)}`;
+}
+function fmtDate(t) {
+  const d = new Date(t);
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg; el.hidden = false;
+  clearTimeout(toast.t); toast.t = setTimeout(() => el.hidden = true, 2200);
+}
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  Object.assign(e, props);
+  for (const k of kids) if (k != null) e.append(k);
+  return e;
+}
+function save(blob, filename) {
+  const a = el('a', { href: URL.createObjectURL(blob), download: filename });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+function safeName(s) { return s.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80); }
+function extFor(mime) { return /mp4|aac/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : 'webm'; }
+function transcriptText(r) {
+  const head = `${r.title}\n日時: ${fmtDate(r.createdAt)}\n長さ: ${r.duration ? fmt(r.duration) : '不明'}\n\n`;
+  return head + (r.transcript || []).map(l => `[${fmt(l.t, false)}] ${l.text}`).join('\n');
+}
+async function updateStorage() {
+  try {
+    const { usage, quota } = await navigator.storage.estimate();
+    $('#storage').textContent = `使用 ${(usage / 1048576).toFixed(1)} MB / 空き ${((quota - usage) / 1073741824).toFixed(1)} GB`;
+  } catch { }
+}
+
+// ---------- 録音 ----------
+function pickMime() {
+  for (const m of ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm'])
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+  return '';
+}
+const elapsed = () => !rec ? 0 : rec.before + (rec.paused ? 0 : performance.now() - rec.segStart);
+
+async function start() {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  } catch (e) {
+    toast('マイクを使えません。ブラウザでマイクの使用を許可してください。');
+    return;
+  }
+  try { await navigator.storage.persist(); } catch { }
+  const mime = pickMime();
+  const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+  const sid = `r${Date.now()}`;
+  rec = { sid, mr, stream, mime: mr.mimeType || mime, chunks: [], transcript: [], startedAt: Date.now(),
+          before: 0, segStart: performance.now(), paused: false, srWanted: false, segT: null };
+
+  mr.ondataavailable = e => {
+    if (!e.data.size) return;
+    rec.chunks.push(e.data);
+    tx('chunks', 'readwrite', s => s.add({ sid, data: e.data })).catch(() => { });
+  };
+  mr.onstop = finalize;
+  mr.start(TIMESLICE);
+  saveLive();
+
+  // レベルメーター
+  const ctx = new AudioContext();
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  ctx.createMediaStreamSource(stream).connect(analyser);
+  rec.ctx = ctx; rec.analyser = analyser; rec.levels = [];
+
+  $('#liveBody').replaceChildren(); $('#interim').textContent = '';
+  if ($('#srOn').checked) startSR(); else $('#srNote').textContent = '文字起こしはオフです。録音のみ保存します。';
+  try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { }
+  setUI(); loop();
+}
+
+function togglePause() {
+  if (!rec) return;
+  if (!rec.paused) {
+    rec.mr.pause(); rec.before = elapsed(); rec.paused = true;
+    try { rec.sr?.stop(); } catch { }
+  } else {
+    rec.mr.resume(); rec.segStart = performance.now(); rec.paused = false;
+    if (rec.srWanted) try { rec.sr.start(); } catch { }
+  }
+  setUI();
+}
+
+function stop() {
+  if (!rec) return;
+  rec.before = elapsed(); rec.paused = true;
+  rec.srWanted = false;
+  try { rec.sr?.stop(); } catch { }
+  rec.mr.stop();
+}
+
+async function finalize() {
+  const r = rec;
+  r.stream.getTracks().forEach(t => t.stop());
+  r.ctx.close().catch(() => { });
+  try { await wakeLock?.release(); } catch { }
+  wakeLock = null;
+  const item = {
+    id: r.sid, title: `${fmtDate(r.startedAt)} の録音`, createdAt: r.startedAt,
+    duration: r.before, mime: r.mime, blob: new Blob(r.chunks, { type: r.mime }), transcript: r.transcript,
+  };
+  try {
+    await tx('recordings', 'readwrite', s => s.put(item));
+    await clearSession(r.sid);
+    toast('録音を保存しました');
+  } catch (e) {
+    toast('保存に失敗しました。音声ファイルをダウンロードします。');
+    save(item.blob, `${safeName(item.title)}.${extFor(item.mime)}`);
+  }
+  rec = null;
+  setUI(); await loadList(r.sid); updateStorage();
+}
+
+function saveLive() {
+  if (!rec) return;
+  const { sid, startedAt, mime, transcript } = rec;
+  tx('live', 'readwrite', s => s.put({ sid, startedAt, mime, transcript, elapsed: elapsed() })).catch(() => { });
+}
+
+// ---------- 音声認識 ----------
+function startSR() {
+  if (!SR) {
+    $('#srNote').textContent = 'このブラウザはリアルタイム文字起こしに対応していません。Chrome か Edge を使ってください。録音は続けられます。';
+    $('#srNote').className = 'note warn';
+    return;
+  }
+  const sr = new SR();
+  sr.lang = $('#lang').value; sr.continuous = true; sr.interimResults = true;
+  sr.onresult = e => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const res = e.results[i];
+      if (res.isFinal) {
+        const text = res[0].transcript.trim();
+        if (text) {
+          const line = { t: rec.segT ?? elapsed(), text };
+          rec.transcript.push(line);
+          $('#liveBody').append(lineEl(line));
+          $('#liveBody').scrollTop = $('#liveBody').scrollHeight;
+          saveLive();
+        }
+        rec.segT = null;
+      } else {
+        if (rec.segT == null) rec.segT = elapsed();
+        interim += res[0].transcript;
+      }
+    }
+    $('#interim').textContent = interim;
+  };
+  sr.onend = () => { if (rec && rec.srWanted && !rec.paused) try { sr.start(); } catch { } };
+  sr.onerror = e => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      rec.srWanted = false;
+      $('#srNote').textContent = '文字起こしが許可されませんでした。http://localhost で開くと使えます(README参照)。録音は続いています。';
+      $('#srNote').className = 'note warn';
+    }
+  };
+  rec.sr = sr; rec.srWanted = true;
+  try { sr.start(); } catch { }
+  $('#srNote').textContent = '文字起こし中。認識はブラウザの音声認識サービスを使います。';
+  $('#srNote').className = 'note';
+}
+
+function lineEl(l, audio) {
+  const ts = audio
+    ? el('button', { className: 'ts', textContent: fmt(l.t, false), title: 'ここから再生', onclick: () => { audio.currentTime = l.t / 1000; audio.play(); } })
+    : el('span', { className: 'ts', textContent: fmt(l.t, false) });
+  return el('div', { className: 'line' }, ts, el('span', { textContent: l.text }));
+}
+
+// ---------- UI ----------
+function setUI() {
+  const on = !!rec;
+  $('#recBtn').classList.toggle('stop', on);
+  $('#recLabel').textContent = on ? '停止して保存' : '録音開始';
+  $('#pauseBtn').disabled = !on;
+  $('#pauseBtn').textContent = rec?.paused ? '再開' : '一時停止';
+  $('#srOn').disabled = $('#lang').disabled = on;
+  const t = $('#tally');
+  t.className = 'tally' + (on ? (rec.paused ? ' paused' : ' on') : '');
+  $('#tallyText').textContent = on ? (rec.paused ? 'PAUSED' : 'REC') : 'STANDBY';
+  if (!on) {
+    $('#timer').textContent = '00:00:00'; drawMeter([]); $('#interim').textContent = '';
+    if ($('#srNote').className === 'note') $('#srNote').textContent = '録音を始めると、話した内容がここに表示されます。';
+  }
+}
+
+function loop() {
+  if (!rec) return;
+  $('#timer').textContent = fmt(elapsed());
+  const buf = new Float32Array(rec.analyser.fftSize);
+  rec.analyser.getFloatTimeDomainData(buf);
+  let sum = 0; for (const v of buf) sum += v * v;
+  const level = rec.paused ? 0 : Math.min(1, Math.sqrt(sum / buf.length) * 4);
+  rec.levels.push(level);
+  if (rec.levels.length > 240) rec.levels.shift();
+  drawMeter(rec.levels);
+  if (!rec.paused && Date.now() - (rec.lastLive || 0) > 10000) { rec.lastLive = Date.now(); saveLive(); }
+  requestAnimationFrame(loop);
+}
+
+function drawMeter(levels) {
+  const c = $('#meter'), dpr = devicePixelRatio || 1;
+  const w = c.clientWidth * dpr, h = c.clientHeight * dpr;
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const g = c.getContext('2d'), cs = getComputedStyle(document.documentElement);
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = cs.getPropertyValue('--line');
+  g.fillRect(0, h / 2 - dpr / 2, w, dpr);
+  const bw = w / 240;
+  g.fillStyle = cs.getPropertyValue(rec?.paused ? '--accent' : '--rec');
+  levels.forEach((v, i) => {
+    const bh = Math.max(dpr, v * h * 0.9);
+    g.fillRect(w - (levels.length - i) * bw, (h - bh) / 2, Math.max(1, bw - dpr), bh);
+  });
+}
+
+// ---------- 一覧 ----------
+async function loadList(openId) {
+  recordings = (await tx('recordings', 'readonly', s => s.getAll())) || [];
+  recordings.sort((a, b) => b.createdAt - a.createdAt);
+  renderList(openId);
+}
+
+function renderList(openId) {
+  const q = $('#q').value.trim().toLowerCase();
+  const items = recordings.filter(r => !q || r.title.toLowerCase().includes(q) ||
+    (r.transcript || []).some(l => l.text.toLowerCase().includes(q)));
+  const list = $('#list');
+  if (!items.length) {
+    list.replaceChildren(el('div', { className: 'empty', textContent: q ? '一致する録音はありません。' : 'まだ録音がありません。左の「録音開始」を押すと、ここに保存されます。' }));
+    return;
+  }
+  list.replaceChildren(...items.map(r => itemEl(r, r.id === openId)));
+}
+
+function itemEl(r, open) {
+  const chars = (r.transcript || []).reduce((n, l) => n + l.text.length, 0);
+  const titleEl = el('div', { className: 'item-title', textContent: r.title });
+  const meta = el('div', { className: 'item-meta' },
+    el('span', { textContent: fmtDate(r.createdAt) }),
+    el('span', { textContent: r.duration ? fmt(r.duration) : '長さ不明' }),
+    el('span', { textContent: `${(r.blob.size / 1048576).toFixed(1)} MB` }),
+    chars ? el('span', { className: 'badge', textContent: `文字起こし ${chars}字` }) : null,
+    r.recovered ? el('span', { className: 'badge', textContent: '復元' }) : null);
+  const d = el('details', { className: 'item' }, el('summary', {}, titleEl, meta));
+  let built = false;
+  d.addEventListener('toggle', () => { if (d.open && !built) { built = true; buildBody(d, r, titleEl); } });
+  if (open) d.open = true;
+  return d;
+}
+
+function buildBody(d, r, titleEl) {
+  const audio = el('audio', { controls: true, preload: 'metadata', src: URL.createObjectURL(r.blob) });
+  // MediaRecorder の webm は長さ情報が無いため、シーク可能にする
+  audio.addEventListener('loadedmetadata', () => {
+    if (audio.duration === Infinity) {
+      audio.currentTime = 1e9;
+      audio.addEventListener('timeupdate', () => { audio.currentTime = 0; }, { once: true });
+    }
+  });
+  const title = el('input', { className: 'title', value: r.title, id: `t-${r.id}`, 'aria-label': 'タイトル' });
+  title.addEventListener('change', async () => {
+    r.title = title.value.trim() || r.title; title.value = r.title; titleEl.textContent = r.title;
+    await tx('recordings', 'readwrite', s => s.put(r)); toast('タイトルを保存しました');
+  });
+  const del = el('button', { className: 'danger', textContent: '削除' });
+  del.onclick = async () => {
+    if (!del.classList.contains('armed')) {
+      del.classList.add('armed'); del.textContent = 'もう一度押すと削除';
+      setTimeout(() => { del.classList.remove('armed'); del.textContent = '削除'; }, 3000);
+      return;
+    }
+    await tx('recordings', 'readwrite', s => s.delete(r.id));
+    URL.revokeObjectURL(audio.src); toast('削除しました'); loadList(); updateStorage();
+  };
+  const hasText = (r.transcript || []).length > 0;
+  const actions = el('div', { className: 'actions' },
+    el('button', { textContent: '音声を保存', onclick: () => save(r.blob, `${safeName(r.title)}.${extFor(r.mime)}`) }),
+    el('button', { textContent: 'テキストを保存', disabled: !hasText, onclick: () => save(new Blob([transcriptText(r)], { type: 'text/plain' }), `${safeName(r.title)}.txt`) }),
+    el('button', { textContent: 'テキストをコピー', disabled: !hasText, onclick: async () => {
+      try { await navigator.clipboard.writeText(transcriptText(r)); toast('コピーしました'); }
+      catch { toast('コピーできませんでした'); }
+    } }),
+    del);
+  const tr = hasText
+    ? el('div', { className: 'transcript' }, ...r.transcript.map(l => lineEl(l, audio)))
+    : el('div', { className: 'note', textContent: 'この録音には文字起こしがありません。' });
+  d.append(el('div', { className: 'item-body' }, title, audio, tr, actions));
+}
+
+// ---------- 途中で閉じた録音の復元 ----------
+async function recover() {
+  const lives = (await tx('live', 'readonly', s => s.getAll())) || [];
+  let n = 0;
+  for (const l of lives) {
+    const chunks = await chunksFor(l.sid);
+    if (chunks.length) {
+      await tx('recordings', 'readwrite', s => s.put({
+        id: l.sid, title: `${fmtDate(l.startedAt)} の録音(復元)`, createdAt: l.startedAt,
+        duration: Math.max(l.elapsed || 0, chunks.length * TIMESLICE - TIMESLICE), mime: l.mime,
+        blob: new Blob(chunks.map(c => c.data), { type: l.mime }), transcript: l.transcript || [], recovered: true,
+      }));
+      n++;
+    }
+    await clearSession(l.sid);
+  }
+  if (n) toast(`途中で終了した録音を ${n} 件復元しました`);
+}
+
+// ---------- 起動 ----------
+$('#recBtn').onclick = () => rec ? stop() : start();
+$('#pauseBtn').onclick = togglePause;
+$('#q').oninput = () => renderList();
+window.addEventListener('beforeunload', e => { if (rec) { e.preventDefault(); e.returnValue = ''; } });
+document.addEventListener('visibilitychange', async () => {
+  if (rec && document.visibilityState === 'visible' && (!wakeLock || wakeLock.released)) {
+    try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { }
+  }
+});
+if (!window.MediaRecorder) { $('#recBtn').disabled = true; toast('このブラウザは録音に対応していません'); }
+(async () => {
+  try { db = await openDB(); await recover(); await loadList(); }
+  catch { toast('保存領域を開けません。プライベートウィンドウでは使えません。'); }
+  setUI(); updateStorage();
+})();
+</script>
+</body>
+</html>
