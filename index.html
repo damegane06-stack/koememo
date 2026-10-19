@@ -197,6 +197,7 @@ textarea.minutes { width: 100%; min-height: 280px; resize: vertical; font-size: 
       </div>
       <div class="opts">
         <label><input type="checkbox" id="srOn" checked> リアルタイム文字起こし</label>
+        <label><input type="checkbox" id="autoW"> 停止後に高精度で文字起こし</label>
         <label>言語
           <select id="lang">
             <option value="ja-JP">日本語</option>
@@ -228,7 +229,7 @@ textarea.minutes { width: 100%; min-height: 280px; resize: vertical; font-size: 
 const $ = s => document.querySelector(s);
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const TIMESLICE = 5000;
-let db, rec = null, wakeLock = null, recordings = [];
+let db, rec = null, wakeLock = null, recordings = [], autoRunId = null;
 
 // ---------- IndexedDB ----------
 function openDB() {
@@ -418,6 +419,7 @@ async function finalize() {
     save(item.blob, `${safeName(item.title)}.${extFor(item.mime)}`);
   }
   rec = null;
+  if ($('#autoW').checked) autoRunId = r.sid;
   setUI(); await loadList(r.sid); updateStorage();
 }
 
@@ -936,6 +938,7 @@ function buildBody(d, r, titleEl, refreshMeta) {
     del);
 
   renderMarks(); renderTranscript();
+  if (autoRunId === r.id) { autoRunId = null; setTimeout(() => wBtn.click(), 300); }
   d.append(el('div', { className: 'item-body' },
     title, audio,
     el('div', { className: 'sec' },
@@ -972,6 +975,8 @@ async function recover() {
 $('#recBtn').onclick = () => rec ? stop() : start();
 $('#pauseBtn').onclick = togglePause;
 $('#markBtn').onclick = addLiveMark;
+$('#autoW').checked = prefGet('autoW', '1') === '1';
+$('#autoW').onchange = () => prefSet('autoW', $('#autoW').checked ? '1' : '0');
 $('#q').oninput = () => renderList();
 document.addEventListener('keydown', e => {
   if (!rec || e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.key.toLowerCase() !== 'm') return;
