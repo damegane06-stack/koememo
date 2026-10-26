@@ -229,6 +229,7 @@ textarea.minutes { width: 100%; min-height: 280px; resize: vertical; font-size: 
       <div class="opts">
         <label><input type="checkbox" id="srOn" checked> リアルタイム文字起こし</label>
         <label><input type="checkbox" id="autoW"> 停止後に高精度で文字起こし・話者分け</label>
+        <label><input type="checkbox" id="fillerOff"> 「えー」「あのー」を除く</label>
         <span class="voice"><span id="voiceState">自分の声：未登録</span> <button class="linkish" id="voiceBtn">声の登録</button></span>
         <label>言語
           <select id="lang">
@@ -351,9 +352,22 @@ async function copy(text, done = 'コピーしました') {
 function safeName(s) { return s.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80); }
 function extFor(mime) { return /mp4|aac/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : 'webm'; }
 const marksOf = r => (r.marks || []).slice().sort((a, b) => a.t - b.t);
+// 「えー」「あのー」などのフィラーを除く（元の文字起こしは残し、表示・書き出し・議事録にだけ反映）
+let fillerOff = true;
+const FILLER_RE = /(?<![ぁ-ゖ])(?:えー+っ?と|えっと|ええと|あのー+|そのー+|まあー+|えー+|あー+|うー+ん|うー+|んー+|まー+|おー+)[、,，]?\s*/g;
+const FILLER_SOLO = /^(?:あの|その|まあ|ええと|えと|え|あ|ん)$/;
+function clean(t) {
+  if (!fillerOff) return t;
+  const parts = t.replace(FILLER_RE, '').split(/([、。，．！？!?\s]+)/);
+  for (let i = 0; i < parts.length; i += 2) {
+    if (FILLER_SOLO.test(parts[i])) { parts[i] = ''; if (parts[i + 1] && /^[、，,\s]+$/.test(parts[i + 1])) parts[i + 1] = ''; }
+  }
+  return parts.join('').replace(/^[、，,。\s]+/, '').replace(/[、，,]{2,}/g, '、').trim();
+}
+const shownLines = r => (r.transcript || []).filter(l => clean(l.text));
 const spkPrefix = (r, l) => l.spk ? `${spkName(r, l.spk)}：` : '';
 function transcriptLines(r) {
-  return (r.transcript || []).map(l => `[${fmt(l.t, false)}] ${spkPrefix(r, l)}${l.text}`).join('\n');
+  return shownLines(r).map(l => `[${fmt(l.t, false)}] ${spkPrefix(r, l)}${clean(l.text)}`).join('\n');
 }
 function exportText(r) {
   const parts = [`${r.title}\n日時: ${fmtDate(r.createdAt)}\n長さ: ${r.duration ? fmt(r.duration) : '不明'}`];
@@ -496,7 +510,7 @@ function startSR() {
           const line = { t: rec.segT ?? elapsed(), text };
           rec.transcript.push(line);
           $('#liveBody').append(el('div', { className: 'line' },
-            el('span', { className: 'ts', textContent: fmt(line.t, false) }), el('span', { textContent: text })));
+            el('span', { className: 'ts', textContent: fmt(line.t, false) }), el('span', { textContent: clean(text) || '（えー・あのー等）' })));
           $('#liveBody').scrollTop = $('#liveBody').scrollHeight;
           saveLive();
         }
@@ -698,7 +712,7 @@ async function enrollVoice(blob, ui) {
     for (let s = 0, i = 0; s + W <= pcm.length; s += STEP, i++) {
       ui(i / total, '声を分析しています…');
       const seg = pcm.subarray(s, s + W);
-      if (rms(seg) < 0.01) continue;
+      if (rms(seg) < 0.004) continue;
       vs.push(await embed(seg));
     }
     if (vs.length < 4) throw new Error('声が十分に録れていません。マイクに向かって、もう一度読んでください');
@@ -842,7 +856,7 @@ async function aiEngine() {
   return null;
 }
 function aiSource(r) {
-  const rows = (r.transcript || []).map(l => ({ t: l.t, s: `[${fmt(l.t, false)}] ${spkPrefix(r, l)}${l.text}` }));
+  const rows = shownLines(r).map(l => ({ t: l.t, s: `[${fmt(l.t, false)}] ${spkPrefix(r, l)}${clean(l.text)}` }));
   for (const m of r.marks || []) rows.push({ t: m.t, s: `[${fmt(m.t, false)}] ★重要${m.label ? '：' + m.label : ''}` });
   return rows.sort((a, b) => a.t - b.t).map(x => x.s);
 }
@@ -991,6 +1005,7 @@ function itemEl(r, open) {
   const titleEl = el('div', { className: 'item-title', textContent: r.title });
   let meta = metaEl(r);
   const d = el('details', { className: 'item' }, el('summary', {}, titleEl, meta));
+  d.dataset.id = r.id;
   const refreshMeta = () => { const m = metaEl(r); meta.replaceWith(m); meta = m; };
   let built = false;
   d.addEventListener('toggle', () => { if (d.open && !built) { built = true; buildBody(d, r, titleEl, refreshMeta); } });
@@ -1049,14 +1064,16 @@ function buildBody(d, r, titleEl, refreshMeta) {
     }
     const ms = marksOf(r);
     tr.replaceChildren(...lines.map((l, i) => {
+      const shown = clean(l.text);
+      if (!shown) return null;
       const next = lines[i + 1]?.t ?? Infinity;
       const marked = ms.some(m => m.t >= l.t && m.t < next);
-      const span = el('span', { className: 'edit', textContent: l.text, title: 'クリックして修正できます', spellcheck: false });
+      const span = el('span', { className: 'edit', textContent: shown, title: 'クリックして修正できます', spellcheck: false });
       try { span.contentEditable = 'plaintext-only'; } catch { span.contentEditable = 'true'; }
       span.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); span.blur(); } });
       span.addEventListener('blur', async () => {
         const v = span.textContent.replace(/\s+/g, ' ').trim();
-        if (v === l.text) return;
+        if (v === shown) return;
         if (v) l.text = v; else r.transcript.splice(r.transcript.indexOf(l), 1);
         await putRec(r); refreshMeta();
         if (!v) renderTranscript();
@@ -1065,7 +1082,7 @@ function buildBody(d, r, titleEl, refreshMeta) {
       return el('div', { className: 'line' + (marked ? ' marked' : '') },
         el('button', { className: 'ts', textContent: fmt(l.t, false), title: 'ここから再生', onclick: () => seek(l.t) }),
         el('div', { className: 'txt' }, l.spk ? spkChip(l) : null, span));
-    }));
+    }).filter(Boolean));
     renderSpeakers();
   }
 
@@ -1264,6 +1281,12 @@ $('#recBtn').onclick = () => rec ? stop() : start();
 $('#pauseBtn').onclick = togglePause;
 $('#markBtn').onclick = addLiveMark;
 $('#autoW').checked = prefGet('autoW', '1') === '1';
+fillerOff = $('#fillerOff').checked = prefGet('fillerOff', '1') === '1';
+$('#fillerOff').onchange = () => {
+  fillerOff = $('#fillerOff').checked;
+  prefSet('fillerOff', fillerOff ? '1' : '0');
+  renderList(document.querySelector('details.item[open]')?.dataset.id);
+};
 function updateVoiceUI() {
   $('#voiceState').textContent = myVoice ? '自分の声：登録済み' : '自分の声：未登録';
   $('#voiceBtn').textContent = myVoice ? '登録し直す' : '声の登録';
