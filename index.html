@@ -165,6 +165,8 @@ dialog::backdrop { background: rgba(20, 22, 21, .45); }
 .passage { margin: 0; font-family: var(--font-display); font-size: 16px; line-height: 2; background: var(--raised); border-radius: 12px; padding: 14px 18px; }
 
 /* 一覧 */
+.list-tools { display: flex; gap: 8px; align-items: center; flex: 1; justify-content: flex-end; min-width: 0; }
+.list-tools button { font-size: 13px; padding: 6px 14px; flex: none; }
 .list-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .list { display: grid; gap: 2px; margin-inline: -8px; }
 .empty { color: var(--muted); font-size: 14px; padding: 28px 18px; text-align: center; margin-inline: 8px; border: 1px dashed var(--line); border-radius: 12px; }
@@ -227,9 +229,8 @@ textarea.minutes { width: 100%; min-height: 280px; resize: vertical; font-size: 
         <button class="ctl mark" id="markBtn" disabled title="キーボードの M でも付けられます"><span class="knob">★</span><span>しるし</span></button>
       </div>
       <div class="opts">
-        <label><input type="checkbox" id="srOn" checked> リアルタイム文字起こし</label>
-        <label><input type="checkbox" id="autoW"> 停止後に高精度で文字起こし・話者分け</label>
-        <label><input type="checkbox" id="fillerOff"> 「えー」「あのー」を除く</label>
+        <input type="checkbox" id="srOn" checked hidden>
+        <input type="checkbox" id="autoW" hidden>
         <span class="voice"><span id="voiceState">自分の声：未登録</span> <button class="linkish" id="voiceBtn">声の登録</button></span>
         <label>言語
           <select id="lang">
@@ -250,8 +251,13 @@ textarea.minutes { width: 100%; min-height: 280px; resize: vertical; font-size: 
     <section class="panel" aria-label="録音一覧">
       <div class="list-head">
         <h2>録音一覧</h2>
-        <input type="search" id="q" placeholder="検索">
+        <div class="list-tools">
+          <button id="importBtn" title="スマホなどで録った音声ファイルを読み込みます">取り込む</button>
+          <input type="file" id="importFile" accept="audio/*,video/webm,video/mp4,.m4a,.webm,.mp3,.wav" multiple hidden>
+          <input type="search" id="q" placeholder="検索">
+        </div>
       </div>
+      <div class="note" id="mobileNote" hidden>スマホでは、高精度文字起こし・話者分けを自動では行いません（メモリ不足でページが落ちることがあるため）。音声を保存してPCの「取り込む」から読み込むと、PCで処理できます。</div>
       <div class="list" id="list"></div>
     </section>
   </div>
@@ -275,6 +281,8 @@ textarea.minutes { width: 100%; min-height: 280px; resize: vertical; font-size: 
 <script>
 const $ = s => document.querySelector(s);
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+// スマホ・タブレットはメモリが少なく、ブラウザ内のAIで落ちやすいので重い処理を控える
+const MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
 const TIMESLICE = 5000;
 let db, rec = null, wakeLock = null, recordings = [], autoRunId = null;
 
@@ -998,7 +1006,8 @@ function metaEl(r) {
     chars ? el('span', { className: 'badge', textContent: `${r.engine ? '高精度 ' : ''}文字起こし ${chars}字` }) : null,
     r.minutes?.text ? el('span', { className: 'badge', textContent: '議事録あり' }) : null,
     r.marks?.length ? el('span', { className: 'badge mark', textContent: `★ ${r.marks.length}` }) : null,
-    r.recovered ? el('span', { className: 'badge', textContent: '復元' }) : null);
+    r.recovered ? el('span', { className: 'badge', textContent: '復元' }) : null,
+    r.imported ? el('span', { className: 'badge', textContent: '取り込み' }) : null);
 }
 
 function itemEl(r, open) {
@@ -1149,7 +1158,8 @@ function buildBody(d, r, titleEl, refreshMeta) {
 
   const modelSel = el('select', { id: `m-${r.id}`, ariaLabel: '文字起こしのモデル' },
     ...Object.entries(MODELS).map(([k, v]) => el('option', { value: k, textContent: v.label })));
-  modelSel.value = prefGet('model', 'turbo');
+  modelSel.value = MOBILE ? 'small' : prefGet('model', 'turbo');
+  modelSel.hidden = MOBILE;
   modelSel.onchange = () => prefSet('model', modelSel.value);
   const wBtn = el('button', { className: 'btn-primary', textContent: '高精度で文字起こし' });
   const wCancel = el('button', { textContent: '中止', hidden: true, onclick: cancelJob });
@@ -1167,7 +1177,16 @@ function buildBody(d, r, titleEl, refreshMeta) {
     wNote.textContent = msg; wNote.className = isErr ? 'note warn' : 'note';
   };
   const busy = on => { wBtn.disabled = dBtn.disabled = on; wCancel.hidden = !on; wBar.hidden = !on; };
+  // スマホでは1回目に注意を出し、もう一度押したときだけ実行する
+  const mobileGuard = (btn, label) => {
+    if (!MOBILE || btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = label; return true; }
+    btn.dataset.armed = '1'; btn.textContent = 'もう一度押すと実行';
+    progressUI(0, 'スマホではメモリが足りず、途中でページが落ちることがあります。PCで「取り込む」から処理するのがおすすめです。', true);
+    setTimeout(() => { if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = label; } }, 5000);
+    return false;
+  };
   wBtn.onclick = async () => {
+    if (!chainDiar && !mobileGuard(wBtn, '高精度で文字起こし')) return;
     busy(true);
     const ok = await whisperTranscribe(r, modelSel.value, progressUI);
     busy(false);
@@ -1176,6 +1195,7 @@ function buildBody(d, r, titleEl, refreshMeta) {
     chainDiar = false;
   };
   dBtn.onclick = async () => {
+    if (!mobileGuard(dBtn, '話者を分ける')) return;
     busy(true);
     const ok = await diarize(r, progressUI);
     busy(false);
@@ -1280,12 +1300,43 @@ async function recover() {
 $('#recBtn').onclick = () => rec ? stop() : start();
 $('#pauseBtn').onclick = togglePause;
 $('#markBtn').onclick = addLiveMark;
-$('#autoW').checked = prefGet('autoW', '1') === '1';
-fillerOff = $('#fillerOff').checked = prefGet('fillerOff', '1') === '1';
-$('#fillerOff').onchange = () => {
-  fillerOff = $('#fillerOff').checked;
-  prefSet('fillerOff', fillerOff ? '1' : '0');
-  renderList(document.querySelector('details.item[open]')?.dataset.id);
+// リアルタイム文字起こし・停止後の高精度文字起こしと話者分け・フィラー除去は常にオン（スマホは自動処理なし）
+$('#autoW').checked = !MOBILE;
+if (MOBILE) {
+  document.querySelector('.voice').hidden = true;
+  document.querySelector('.live .kbd')?.parentElement.replaceChildren('大事な場面では「★ しるし」を押してください。');
+  $('#mobileNote').hidden = false;
+}
+// ---------- 音声ファイルの取り込み ----------
+function mediaDuration(blob) {
+  return new Promise(res => {
+    const a = new Audio(), url = URL.createObjectURL(blob);
+    const done = v => { URL.revokeObjectURL(url); res(v); };
+    a.preload = 'metadata';
+    a.onloadedmetadata = () => done(isFinite(a.duration) ? Math.round(a.duration * 1000) : null);
+    a.onerror = () => done(null);
+    setTimeout(() => done(null), 8000);
+    a.src = url;
+  });
+}
+$('#importBtn').onclick = () => $('#importFile').click();
+$('#importFile').onchange = async e => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  let lastId = null;
+  for (const f of files) {
+    const id = `f${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+    const item = {
+      id, title: f.name.replace(/\.[^.]+$/, ''), createdAt: f.lastModified || Date.now(), lang: $('#lang').value,
+      duration: await mediaDuration(f), mime: f.type || 'audio/mp4', blob: f, transcript: [], marks: [], imported: true,
+    };
+    try { await putRec(item); lastId = id; }
+    catch { toast(`「${f.name}」を保存できませんでした`); }
+  }
+  if (!lastId) return;
+  toast(files.length > 1 ? `${files.length}件を取り込みました` : '取り込みました');
+  if ($('#autoW').checked) autoRunId = lastId;
+  await loadList(lastId); updateStorage();
 };
 function updateVoiceUI() {
   $('#voiceState').textContent = myVoice ? '自分の声：登録済み' : '自分の声：未登録';
@@ -1338,7 +1389,6 @@ $('#vStart').onclick = async () => {
   }
   $('#vStart').disabled = false;
 };
-$('#autoW').onchange = () => prefSet('autoW', $('#autoW').checked ? '1' : '0');
 $('#q').oninput = () => renderList();
 document.addEventListener('keydown', e => {
   if (!rec || e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.key.toLowerCase() !== 'm') return;
