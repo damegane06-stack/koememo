@@ -21,6 +21,11 @@
   --accent-soft: #dfe6e1;
   --mark: #a87a22;
   --mark-soft: #f1e7cf;
+  --s1: #7a5c99;
+  --s2: #2f7a8a;
+  --s3: #a0583a;
+  --s4: #5e7a2f;
+  --s5: #8a3f63;
   --screen: #1b1e1c;
   --screen-ink: #e8ebe6;
   --screen-dim: #7d847f;
@@ -45,6 +50,11 @@
     --accent-soft: #223029;
     --mark: #e3b45a;
     --mark-soft: #362c18;
+    --s1: #b9a0dc;
+    --s2: #7cc3d1;
+    --s3: #e39a78;
+    --s4: #a9c77a;
+    --s5: #db8db0;
     --screen: #0b0d0c;
     --screen-ink: #e8ebe6;
     --screen-dim: #6f7671;
@@ -133,6 +143,27 @@ button.ts:hover { text-decoration: underline; }
 .edit:focus { background: var(--raised); box-shadow: 0 0 0 2px var(--accent); }
 .interim { color: var(--muted); font-style: italic; }
 
+/* 話者 */
+.txt { min-width: 0; overflow-wrap: anywhere; }
+select.spk { appearance: none; -webkit-appearance: none; field-sizing: content; border: 0; border-radius: 999px; padding: 0 9px; margin-right: 6px; font: inherit; font-size: 11.5px; font-weight: 500; line-height: 1.7; vertical-align: 1px; cursor: pointer; color: var(--c); background: color-mix(in srgb, var(--c) 15%, transparent); max-width: 9em; text-overflow: ellipsis; }
+select.spk.guess { opacity: .6; }
+select.spk:hover { background: color-mix(in srgb, var(--c) 25%, transparent); }
+.spk-panel { display: grid; gap: 8px; background: var(--surface); border-radius: 10px; padding: 12px 14px; }
+.spk-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px; align-items: center; }
+.spk-dot { width: 10px; height: 10px; border-radius: 50%; }
+.spk-me { font-weight: 500; padding-inline: 10px; }
+input.spk-name { font: inherit; font-size: 13px; color: var(--ink); background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 3px 10px; min-width: 0; }
+.spk-count { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.spk-tune { display: flex; gap: 10px; align-items: center; font-size: 12px; color: var(--muted); padding-top: 4px; }
+.spk-tune input { flex: 1; min-width: 0; accent-color: var(--accent); }
+.voice { display: inline-flex; gap: 6px; align-items: center; }
+button.linkish { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; text-underline-offset: 3px; font-size: 13px; border-radius: 3px; }
+dialog { border: 0; border-radius: 18px; padding: 0; background: var(--surface); color: var(--ink); width: min(520px, calc(100% - 32px)); box-shadow: 0 30px 80px -20px rgba(0,0,0,.45); }
+dialog::backdrop { background: rgba(20, 22, 21, .45); }
+.dlg { display: grid; gap: 14px; padding: 24px; }
+.dlg h3 { font-size: 15px; color: var(--ink); letter-spacing: .06em; }
+.passage { margin: 0; font-family: var(--font-display); font-size: 16px; line-height: 2; background: var(--raised); border-radius: 12px; padding: 14px 18px; }
+
 /* 一覧 */
 .list-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .list { display: grid; gap: 2px; margin-inline: -8px; }
@@ -197,7 +228,8 @@ textarea.minutes { width: 100%; min-height: 280px; resize: vertical; font-size: 
       </div>
       <div class="opts">
         <label><input type="checkbox" id="srOn" checked> リアルタイム文字起こし</label>
-        <label><input type="checkbox" id="autoW"> 停止後に高精度で文字起こし</label>
+        <label><input type="checkbox" id="autoW"> 停止後に高精度で文字起こし・話者分け</label>
+        <span class="voice"><span id="voiceState">自分の声：未登録</span> <button class="linkish" id="voiceBtn">声の登録</button></span>
         <label>言語
           <select id="lang">
             <option value="ja-JP">日本語</option>
@@ -223,6 +255,20 @@ textarea.minutes { width: 100%; min-height: 280px; resize: vertical; font-size: 
     </section>
   </div>
 </div>
+<dialog id="voiceDlg" aria-labelledby="voiceTitle">
+  <div class="dlg">
+    <h3 id="voiceTitle">自分の声を登録</h3>
+    <p class="note">話者分けで「自分」を見分けるために使います。声のデータはこのブラウザの中にだけ保存され、外部には送られません。</p>
+    <p class="passage">今日はいい天気ですね。こえメモは、会議やふだんの会話を録音して、文字に起こすためのツールです。これから少しのあいだ、いつもの話し方で、この文章を読み上げます。早口になりすぎず、会議で話すときと同じくらいの声の大きさで読んでください。読み終わって時間が残っていたら、今日の予定や最近あったことを自由に話してください。</p>
+    <div class="progress"><i id="vBar"></i></div>
+    <div class="note" id="vNote">会議で使うときと同じ場所・同じマイクで、「録音して登録」を押してから上の文章を読み上げてください（25秒）。</div>
+    <div class="actions">
+      <button class="btn-primary" id="vStart">録音して登録</button>
+      <button id="vDelete" hidden>登録を消す</button>
+      <button id="vClose">閉じる</button>
+    </div>
+  </div>
+</dialog>
 <div class="toast" id="toast" hidden></div>
 
 <script>
@@ -234,12 +280,13 @@ let db, rec = null, wakeLock = null, recordings = [], autoRunId = null;
 // ---------- IndexedDB ----------
 function openDB() {
   return new Promise((res, rej) => {
-    const r = indexedDB.open('koememo', 1);
+    const r = indexedDB.open('koememo', 2);
     r.onupgradeneeded = () => {
-      const d = r.result;
-      d.createObjectStore('recordings', { keyPath: 'id' });
-      d.createObjectStore('live', { keyPath: 'sid' });
-      d.createObjectStore('chunks', { autoIncrement: true }).createIndex('sid', 'sid');
+      const d = r.result, has = n => d.objectStoreNames.contains(n);
+      if (!has('recordings')) d.createObjectStore('recordings', { keyPath: 'id' });
+      if (!has('live')) d.createObjectStore('live', { keyPath: 'sid' });
+      if (!has('chunks')) d.createObjectStore('chunks', { autoIncrement: true }).createIndex('sid', 'sid');
+      if (!has('settings')) d.createObjectStore('settings', { keyPath: 'key' });
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -304,8 +351,9 @@ async function copy(text, done = 'コピーしました') {
 function safeName(s) { return s.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80); }
 function extFor(mime) { return /mp4|aac/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : 'webm'; }
 const marksOf = r => (r.marks || []).slice().sort((a, b) => a.t - b.t);
+const spkPrefix = (r, l) => l.spk ? `${spkName(r, l.spk)}：` : '';
 function transcriptLines(r) {
-  return (r.transcript || []).map(l => `[${fmt(l.t, false)}] ${l.text}`).join('\n');
+  return (r.transcript || []).map(l => `[${fmt(l.t, false)}] ${spkPrefix(r, l)}${l.text}`).join('\n');
 }
 function exportText(r) {
   const parts = [`${r.title}\n日時: ${fmtDate(r.createdAt)}\n長さ: ${r.duration ? fmt(r.duration) : '不明'}`];
@@ -547,16 +595,8 @@ async function whisperTranscribe(r, modelKey, ui) {
   const opts = modelKey === 'turbo'
     ? { model: MODELS.turbo.id, device: 'webgpu', dtype: { encoder_model: gpu.f16 ? 'fp16' : 'fp32', decoder_model_merged: 'q4' } }
     : { model: MODELS.small.id, device: gpu.ok ? 'webgpu' : 'wasm', dtype: gpu.ok ? 'fp32' : 'q8' };
-  job = {
-    cancelled: false,
-    onmsg(d) {
-      if (d.type === 'progress') ui(d.loaded / d.total, `モデルを準備中… ${Math.round(d.loaded / 1048576)} / ${Math.round(d.total / 1048576)} MB（初回のみ）`);
-      else if (d.type === 'error') job?.pending?.rej(new Error(d.message));
-      else job?.pending?.res(d);
-    },
-  };
+  startJob(ui);
   try {
-    getWorker();
     ui(0, '音声を読み込み中…');
     const pcm = await decodePCM(r.blob);
     ui(0, 'モデルを準備中…');
@@ -577,12 +617,15 @@ async function whisperTranscribe(r, modelKey, ui) {
         if (!text || HALLUCINATION.test(text)) continue;
         const prev = lines[lines.length - 1];
         if (prev && prev.text === text) continue;
-        lines.push({ t: Math.round((s / 16000 + (c.timestamp?.[0] ?? 0)) * 1000), text });
+        const t = Math.round((s / 16000 + (c.timestamp?.[0] ?? 0)) * 1000);
+        const e = c.timestamp?.[1] != null ? Math.round((s / 16000 + c.timestamp[1]) * 1000) : undefined;
+        lines.push(e > t ? { t, e, text } : { t, text });
       }
     }
     if (!r.transcriptLive && r.transcript?.length) r.transcriptLive = r.transcript;
     r.transcript = lines;
     r.engine = modelKey;
+    delete r.diarized;
     await putRec(r);
     ui(1, '');
     toast('高精度の文字起こしが終わりました');
@@ -592,6 +635,176 @@ async function whisperTranscribe(r, modelKey, ui) {
     else ui(0, `うまくいきませんでした：${e.message}`, true);
     return false;
   } finally { job = null; }
+}
+
+function startJob(ui) {
+  job = {
+    cancelled: false,
+    onmsg(d) {
+      if (d.type === 'progress') ui(d.loaded / d.total, `AIモデルを準備中… ${Math.round(d.loaded / 1048576)} / ${Math.round(d.total / 1048576)} MB（初回のみ）`);
+      else if (d.type === 'error') job?.pending?.rej(new Error(d.message));
+      else job?.pending?.res(d);
+    },
+  };
+  getWorker();
+}
+
+// ---------- 話者分け(声の特徴で聞き分ける) ----------
+const SELF_SIM = 0.70;      // 登録した声とこれ以上似ていれば「自分」
+const DEFAULT_CUT = 0.75;   // 同じ人とみなす似ている度合い
+const SPK_COLORS = ['--s1', '--s2', '--s3', '--s4', '--s5'];
+let myVoice = null, svDevice = null;
+const dendroCache = new Map();
+
+function dot(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+function unit(v) { const n = Math.sqrt(dot(v, v)) || 1; return Float32Array.from(v, x => x / n); }
+function meanVec(vs) {
+  const m = new Float32Array(vs[0].length);
+  for (const v of vs) for (let i = 0; i < m.length; i++) m[i] += v[i];
+  return unit(m);
+}
+function spkName(r, k) { return k === 'me' ? '自分' : (r.spkNames?.[k] || `話者${k}`); }
+function spkColor(k) { return k === 'me' ? 'var(--accent)' : `var(${SPK_COLORS[(k.charCodeAt(0) - 65) % SPK_COLORS.length]})`; }
+
+async function loadSV() {
+  const gpu = await gpuInfo();
+  svDevice = gpu.ok ? 'webgpu' : 'wasm';
+  try { await call({ type: 'sv-load', device: svDevice, dtype: gpu.ok ? 'fp32' : 'q8' }); }
+  catch (e) {
+    if (svDevice === 'wasm' || job?.cancelled) throw e;
+    svDevice = 'wasm';
+    await call({ type: 'sv-load', device: 'wasm', dtype: 'q8' });
+  }
+}
+async function embed(seg) {
+  try { return (await call({ type: 'embed', audio: seg.slice() })).vec; }
+  catch (e) {
+    if (svDevice !== 'webgpu' || job?.cancelled) throw e;
+    svDevice = 'wasm';
+    await call({ type: 'sv-load', device: 'wasm', dtype: 'q8' });
+    return (await call({ type: 'embed', audio: seg.slice() })).vec;
+  }
+}
+
+async function enrollVoice(blob, ui) {
+  if (job) throw new Error('ほかの処理が進行中です。終わってからもう一度お試しください');
+  startJob(ui);
+  try {
+    ui(0, '声を分析しています…');
+    const pcm = await decodePCM(blob);
+    await loadSV();
+    const W = 3 * 16000, STEP = 1.5 * 16000, vs = [];
+    const total = Math.max(1, Math.floor((pcm.length - W) / STEP) + 1);
+    for (let s = 0, i = 0; s + W <= pcm.length; s += STEP, i++) {
+      ui(i / total, '声を分析しています…');
+      const seg = pcm.subarray(s, s + W);
+      if (rms(seg) < 0.01) continue;
+      vs.push(await embed(seg));
+    }
+    if (vs.length < 4) throw new Error('声が十分に録れていません。マイクに向かって、もう一度読んでください');
+    myVoice = { key: 'voice', vec: meanVec(vs), at: Date.now() };
+    await tx('settings', 'readwrite', st => st.put(myVoice));
+  } finally { job = null; }
+}
+
+async function diarize(r, ui) {
+  if (job) { toast('ほかの処理が進行中です'); return false; }
+  const lines = r.transcript || [];
+  if (!lines.length) { toast('先に文字起こしをしてください'); return false; }
+  startJob(ui);
+  try {
+    ui(0, '音声を読み込み中…');
+    const pcm = await decodePCM(r.blob);
+    await loadSV();
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      ui(i / lines.length, `声を聞き分けています… ${i + 1} / ${lines.length}`);
+      const end = Math.min(l.e ?? lines[i + 1]?.t ?? l.t + 8000, l.t + 8000);
+      const s = Math.floor(l.t * 16), e = Math.min(pcm.length, Math.floor(end * 16));
+      const seg = pcm.subarray(s, Math.max(s, e));
+      if (seg.length < 0.7 * 16000 || rms(seg) < 0.003) { delete l.emb; continue; }
+      l.emb = await embed(seg);
+    }
+    r.diarized = true;
+    dendroCache.delete(r.id);
+    assignSpeakers(r);
+    await putRec(r);
+    ui(1, '');
+    toast(myVoice ? '話者分けが終わりました' : '話者分けが終わりました。声を登録すると「自分」も見分けられます');
+    return true;
+  } catch (e) {
+    if (e.message === 'cancelled') { ui(0, ''); toast('話者分けを中止しました'); }
+    else ui(0, `うまくいきませんでした：${e.message}`, true);
+    return false;
+  } finally { job = null; }
+}
+
+// 平均連結の階層クラスタリング。似ている順に結合した記録を返す
+function dendrogram(V, minSim) {
+  const n = V.length, S = new Float32Array(n * n);
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) S[i * n + j] = S[j * n + i] = dot(V[i], V[j]);
+  const size = new Array(n).fill(1), alive = new Uint8Array(n).fill(1), merges = [];
+  for (;;) {
+    let best = -2, a = -1, b = -1;
+    for (let i = 0; i < n; i++) {
+      if (!alive[i]) continue;
+      for (let j = i + 1; j < n; j++) if (alive[j] && S[i * n + j] > best) { best = S[i * n + j]; a = i; b = j; }
+    }
+    if (a < 0 || best < minSim) break;
+    merges.push([a, b, best]);
+    for (let k = 0; k < n; k++) {
+      if (!alive[k] || k === a || k === b) continue;
+      const v = (size[a] * S[a * n + k] + size[b] * S[b * n + k]) / (size[a] + size[b]);
+      S[a * n + k] = S[k * n + a] = v;
+    }
+    size[a] += size[b]; alive[b] = 0;
+  }
+  return merges;
+}
+
+function assignSpeakers(r) {
+  const lines = r.transcript || [], cut = r.spkCut ?? DEFAULT_CUT;
+  const idx = [], V = [];
+  lines.forEach((l, i) => { if (l.emb) { idx.push(i); V.push(l.emb); } });
+  if (!V.length) return;
+  const sig = idx.join(',');
+  let cached = dendroCache.get(r.id);
+  if (!cached || cached.sig !== sig) { cached = { sig, merges: dendrogram(V, 0.3) }; dendroCache.set(r.id, cached); }
+  const parent = V.map((_, i) => i);
+  const find = x => parent[x] === x ? x : (parent[x] = find(parent[x]));
+  for (const [a, b, sim] of cached.merges) { if (sim < cut) break; parent[find(b)] = find(a); }
+  let groups = new Map();
+  V.forEach((_, i) => { const g = find(i); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(i); });
+  groups = [...groups.values()];
+  // 1行だけのグループは、近いグループがあればそちらに寄せる
+  if (V.length > 8) {
+    const big = groups.filter(g => g.length > 1), cents = big.map(g => meanVec(g.map(i => V[i])));
+    for (const g of groups.filter(g => g.length === 1)) {
+      let bi = -1, bs = -2;
+      cents.forEach((c, k) => { const v = dot(V[g[0]], c); if (v > bs) { bs = v; bi = k; } });
+      if (bi >= 0 && bs >= cut - 0.15) { big[bi].push(g[0]); g.length = 0; }
+    }
+    groups = groups.filter(g => g.length);
+  }
+  const label = new Array(V.length);
+  const others = [];
+  for (const g of groups) {
+    const self = myVoice && dot(meanVec(g.map(i => V[i])), myVoice.vec) >= SELF_SIM;
+    if (self) g.forEach(i => { label[i] = 'me'; }); else others.push(g);
+  }
+  others.sort((a, b) => Math.min(...a) - Math.min(...b));
+  others.forEach((g, k) => g.forEach(i => { label[i] = String.fromCharCode(65 + Math.min(k, 25)); }));
+  idx.forEach((li, i) => { const l = lines[li]; if (!l.spkManual) { l.spk = label[i]; delete l.spkGuess; } });
+  // 短くて判定できない行は、近くの行の話者を仮に付ける
+  lines.forEach((l, i) => {
+    if (l.emb || l.spkManual) return;
+    let k = 1, near;
+    while (!near && (i - k >= 0 || i + k < lines.length)) {
+      near = (lines[i - k]?.emb && lines[i - k].spk) || (lines[i + k]?.emb && lines[i + k].spk);
+      k++;
+    }
+    l.spk = near; l.spkGuess = true;
+  });
 }
 
 // ---------- AI議事録(Chrome内蔵AI) ----------
@@ -611,7 +824,7 @@ const MINUTES_FORMAT = `## 概要
 
 ## 重要な場面
 - [時刻] 内容（★の付いた場面を中心に）`;
-const MINUTES_RULES = '文字起こしには聞き間違いが含まれるので、文脈から補って読んでください。話されていないことは書かないでください。★は録音者が付けた重要な場面の印です。';
+const MINUTES_RULES = '文字起こしには聞き間違いが含まれるので、文脈から補って読んでください。話されていないことは書かないでください。★は録音者が付けた重要な場面の印です。発言者名がある場合は、ToDoの担当や議論の整理に使ってください（「自分」は録音者本人です）。';
 
 async function aiEngine() {
   try {
@@ -629,7 +842,7 @@ async function aiEngine() {
   return null;
 }
 function aiSource(r) {
-  const rows = (r.transcript || []).map(l => ({ t: l.t, s: `[${fmt(l.t, false)}] ${l.text}` }));
+  const rows = (r.transcript || []).map(l => ({ t: l.t, s: `[${fmt(l.t, false)}] ${spkPrefix(r, l)}${l.text}` }));
   for (const m of r.marks || []) rows.push({ t: m.t, s: `[${fmt(m.t, false)}] ★重要${m.label ? '：' + m.label : ''}` });
   return rows.sort((a, b) => a.t - b.t).map(x => x.s);
 }
@@ -850,8 +1063,71 @@ function buildBody(d, r, titleEl, refreshMeta) {
         toast(v ? '修正を保存しました' : '行を削除しました');
       });
       return el('div', { className: 'line' + (marked ? ' marked' : '') },
-        el('button', { className: 'ts', textContent: fmt(l.t, false), title: 'ここから再生', onclick: () => seek(l.t) }), span);
+        el('button', { className: 'ts', textContent: fmt(l.t, false), title: 'ここから再生', onclick: () => seek(l.t) }),
+        el('div', { className: 'txt' }, l.spk ? spkChip(l) : null, span));
     }));
+    renderSpeakers();
+  }
+
+  // --- 話者 ---
+  const spkKeys = () => {
+    const ks = [...new Set((r.transcript || []).map(l => l.spk).filter(Boolean))];
+    return ks.sort((a, b) => a === 'me' ? -1 : b === 'me' ? 1 : a.localeCompare(b));
+  };
+  function spkChip(l) {
+    const sel = el('select', { className: 'spk' + (l.spkGuess ? ' guess' : ''), title: l.spkGuess ? '短い発言のため推測です。違っていたら選び直してください' : '話者を選び直せます', ariaLabel: '話者' });
+    const ks = spkKeys();
+    if (!ks.includes('me')) ks.unshift('me');
+    for (const k of ks) sel.append(el('option', { value: k, textContent: spkName(r, k) }));
+    sel.append(el('option', { value: '+', textContent: '＋ 新しい話者' }));
+    sel.value = l.spk;
+    sel.style.setProperty('--c', spkColor(l.spk));
+    sel.onchange = async () => {
+      let v = sel.value;
+      if (v === '+') { const used = new Set(spkKeys()); let c = 65; while (used.has(String.fromCharCode(c))) c++; v = String.fromCharCode(c); }
+      l.spk = v; l.spkManual = true; delete l.spkGuess;
+      await putRec(r); renderTranscript(); toast(`${spkName(r, v)} にしました`);
+    };
+    return sel;
+  }
+  const spkBox = el('div', { className: 'spk-panel', hidden: true });
+  function renderSpeakers() {
+    const ks = spkKeys();
+    spkBox.hidden = !r.diarized || !ks.length;
+    if (spkBox.hidden) return;
+    const counts = {};
+    for (const l of r.transcript) if (l.spk) counts[l.spk] = (counts[l.spk] || 0) + 1;
+    const rows = ks.map(k => {
+      const dotEl = el('i', { className: 'spk-dot' }); dotEl.style.background = spkColor(k);
+      let name;
+      if (k === 'me') name = el('span', { className: 'spk-me', textContent: '自分' });
+      else {
+        name = el('input', { className: 'spk-name', value: r.spkNames?.[k] || '', placeholder: `話者${k}`, ariaLabel: `話者${k}の名前` });
+        name.addEventListener('change', async () => {
+          (r.spkNames ||= {})[k] = name.value.trim();
+          if (!r.spkNames[k]) delete r.spkNames[k];
+          await putRec(r); renderTranscript(); toast('名前を保存しました');
+        });
+      }
+      const toMe = k === 'me' ? null : el('button', { textContent: '自分にする', title: 'この話者の発言をすべて「自分」にします' });
+      if (toMe) toMe.onclick = async () => {
+        for (const l of r.transcript) if (l.spk === k) { l.spk = 'me'; l.spkManual = true; delete l.spkGuess; }
+        await putRec(r); renderTranscript(); toast('「自分」にまとめました');
+      };
+      return el('div', { className: 'spk-row' }, dotEl, name, el('span', { className: 'spk-count', textContent: `${counts[k]}行` }), toMe);
+    });
+    const slider = el('input', { type: 'range', min: '0.55', max: '0.92', step: '0.01', value: String(r.spkCut ?? DEFAULT_CUT), id: `cut-${r.id}`, ariaLabel: '話者の分け方' });
+    let tm;
+    slider.oninput = () => {
+      r.spkCut = +slider.value;
+      clearTimeout(tm);
+      tm = setTimeout(async () => { assignSpeakers(r); renderTranscript(); await putRec(r); }, 150);
+    };
+    const canTune = (r.transcript || []).some(l => l.emb);
+    spkBox.replaceChildren(...rows,
+      canTune ? el('label', { className: 'spk-tune' }, el('span', { textContent: 'まとめる' }), slider, el('span', { textContent: '細かく分ける' })) : null,
+      el('div', { className: 'note', textContent: '名前を入れると、その人の発言すべてに反映されます。行の話者名をクリックすると1行ずつ直せます。人数が実際より多いときは「まとめる」側へ、少ないときは「細かく分ける」側へ動かしてください。' }));
+    spkBox.querySelector('.spk-tune input')?.addEventListener('keydown', e => e.stopPropagation());
   }
 
   const modelSel = el('select', { id: `m-${r.id}`, ariaLabel: '文字起こしのモデル' },
@@ -867,14 +1143,26 @@ function buildBody(d, r, titleEl, refreshMeta) {
     r.transcript = r.transcriptLive; delete r.transcriptLive; delete r.engine;
     await putRec(r); restore.hidden = true; renderTranscript(); refreshMeta(); toast('元の文字起こしに戻しました');
   };
+  const dBtn = el('button', { textContent: '話者を分ける', title: '声の特徴で、誰が話したかを聞き分けます' });
+  let chainDiar = false;
+  const progressUI = (p, msg, isErr) => {
+    wBar.firstChild.style.width = `${Math.round(p * 100)}%`;
+    wNote.textContent = msg; wNote.className = isErr ? 'note warn' : 'note';
+  };
+  const busy = on => { wBtn.disabled = dBtn.disabled = on; wCancel.hidden = !on; wBar.hidden = !on; };
   wBtn.onclick = async () => {
-    wBtn.disabled = true; wCancel.hidden = false; wBar.hidden = false;
-    const ok = await whisperTranscribe(r, modelSel.value, (p, msg, isErr) => {
-      wBar.firstChild.style.width = `${Math.round(p * 100)}%`;
-      wNote.textContent = msg; wNote.className = isErr ? 'note warn' : 'note';
-    });
-    wBtn.disabled = false; wCancel.hidden = true; wBar.hidden = true;
+    busy(true);
+    const ok = await whisperTranscribe(r, modelSel.value, progressUI);
+    busy(false);
     if (ok) { restore.hidden = !r.transcriptLive; renderTranscript(); refreshMeta(); wNote.textContent = '行をクリックすると修正できます。'; }
+    if (ok && chainDiar) dBtn.click();
+    chainDiar = false;
+  };
+  dBtn.onclick = async () => {
+    busy(true);
+    const ok = await diarize(r, progressUI);
+    busy(false);
+    if (ok) { renderTranscript(); wNote.textContent = myVoice ? '話者名をクリックすると直せます。' : '話者名をクリックすると直せます。左の「声の登録」をすると「自分」を見分けられます。'; }
   };
 
   // --- AI議事録 ---
@@ -938,14 +1226,14 @@ function buildBody(d, r, titleEl, refreshMeta) {
     del);
 
   renderMarks(); renderTranscript();
-  if (autoRunId === r.id) { autoRunId = null; setTimeout(() => wBtn.click(), 300); }
+  if (autoRunId === r.id) { autoRunId = null; chainDiar = true; setTimeout(() => wBtn.click(), 300); }
   d.append(el('div', { className: 'item-body' },
     title, audio,
     el('div', { className: 'sec' },
       el('div', { className: 'sec-head' }, el('h3', { textContent: 'しるし' }), addMarkBtn), marksBox),
     el('div', { className: 'sec' },
       el('div', { className: 'sec-head' }, el('h3', { textContent: '文字起こし' })),
-      el('div', { className: 'actions' }, wBtn, modelSel, wCancel, restore), wBar, wNote, tr),
+      el('div', { className: 'actions' }, wBtn, modelSel, dBtn, wCancel, restore), wBar, wNote, spkBox, tr),
     el('div', { className: 'sec' },
       el('div', { className: 'sec-head' }, el('h3', { textContent: 'AI議事録' })),
       el('div', { className: 'actions' }, aiBtn, extBtn), links, aiNote, minutes, minutesActions),
@@ -976,6 +1264,57 @@ $('#recBtn').onclick = () => rec ? stop() : start();
 $('#pauseBtn').onclick = togglePause;
 $('#markBtn').onclick = addLiveMark;
 $('#autoW').checked = prefGet('autoW', '1') === '1';
+function updateVoiceUI() {
+  $('#voiceState').textContent = myVoice ? '自分の声：登録済み' : '自分の声：未登録';
+  $('#voiceBtn').textContent = myVoice ? '登録し直す' : '声の登録';
+  $('#vDelete').hidden = !myVoice;
+}
+$('#voiceBtn').onclick = () => {
+  if (rec) { toast('録音中は登録できません'); return; }
+  $('#vNote').className = 'note';
+  $('#voiceDlg').showModal();
+};
+$('#vClose').onclick = () => $('#voiceDlg').close();
+$('#vDelete').onclick = async () => {
+  await tx('settings', 'readwrite', st => st.delete('voice'));
+  myVoice = null; updateVoiceUI();
+  $('#vNote').textContent = '登録を消しました。';
+};
+$('#vStart').onclick = async () => {
+  const vNote = $('#vNote'), bar = p => { $('#vBar').style.width = `${Math.round(p * 100)}%`; };
+  vNote.className = 'note';
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch { vNote.textContent = 'マイクを使えません。ブラウザでマイクの使用を許可してください。'; vNote.className = 'note warn'; return; }
+  $('#vStart').disabled = $('#vClose').disabled = true;
+  const mime = pickMime(), mr = new MediaRecorder(stream, mime ? { mimeType: mime } : {}), parts = [];
+  mr.ondataavailable = e => { if (e.data.size) parts.push(e.data); };
+  const stopped = new Promise(res => { mr.onstop = res; });
+  mr.start();
+  const T = 25000, t0 = performance.now();
+  await new Promise(res => {
+    const tick = () => {
+      const p = (performance.now() - t0) / T;
+      bar(Math.min(1, p));
+      vNote.textContent = `読み上げてください… 残り ${Math.max(0, Math.ceil((T - (performance.now() - t0)) / 1000))} 秒`;
+      if (p >= 1) res(); else requestAnimationFrame(tick);
+    };
+    tick();
+  });
+  mr.stop(); await stopped;
+  stream.getTracks().forEach(t => t.stop());
+  $('#vClose').disabled = false;
+  try {
+    await enrollVoice(new Blob(parts, { type: mr.mimeType }), (p, msg) => { bar(p); vNote.textContent = msg; });
+    bar(1);
+    vNote.textContent = '登録しました。これからの話者分けで「自分」を見分けます。';
+    updateVoiceUI();
+  } catch (e) {
+    bar(0);
+    vNote.textContent = `登録できませんでした：${e.message}`; vNote.className = 'note warn';
+  }
+  $('#vStart').disabled = false;
+};
 $('#autoW').onchange = () => prefSet('autoW', $('#autoW').checked ? '1' : '0');
 $('#q').oninput = () => renderList();
 document.addEventListener('keydown', e => {
@@ -991,7 +1330,12 @@ document.addEventListener('visibilitychange', async () => {
 });
 if (!window.MediaRecorder) { $('#recBtn').disabled = true; toast('このブラウザは録音に対応していません'); }
 (async () => {
-  try { db = await openDB(); await recover(); await loadList(); }
+  try {
+    db = await openDB();
+    myVoice = (await tx('settings', 'readonly', st => st.get('voice'))) || null;
+    updateVoiceUI();
+    await recover(); await loadList();
+  }
   catch { toast('保存領域を開けません。プライベートウィンドウでは使えません。'); }
   setUI(); updateStorage();
 })();
