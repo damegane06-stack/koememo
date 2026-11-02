@@ -457,7 +457,7 @@ async function start() {
   const mime = pickMime();
   try {
     ctx = new AudioContext();
-    try { await ctx.resume(); } catch { }
+    try { await Promise.race([ctx.resume(), new Promise(r => setTimeout(r, 1000))]); } catch { }
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 1024;
     const comp = ctx.createDynamicsCompressor();
