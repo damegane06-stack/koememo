@@ -144,6 +144,7 @@ button.ts:hover { text-decoration: underline; }
 .interim { color: var(--muted); font-style: italic; }
 
 /* 相手の音声スイッチ */
+.tab-warn { background: var(--rec-soft); border-radius: 10px; padding: 10px 14px; font-size: 13px; }
 .tab-toggle { display: flex; align-items: center; gap: 12px; text-align: left; border-radius: 12px; padding: 10px 14px; background: var(--raised); }
 .tab-toggle b { display: block; font-weight: 500; font-size: 14px; }
 .tab-toggle small { display: block; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
@@ -240,8 +241,9 @@ textarea.minutes { width: 100%; min-height: 280px; resize: vertical; font-size: 
       </div>
       <button class="tab-toggle" id="tabBtn" aria-pressed="false" hidden>
         <span class="switch" aria-hidden="true"></span>
-        <span><b>相手の音声も録る</b><small>Chromeのタブ（Meet・ブラウザ版Zoomなど）の音を一緒に録音</small></span>
+        <span><b>相手の音声も録る</b><small>Chromeのタブ（Meet・ブラウザ版Zoom・Teamsなど）の音を一緒に録音。参加者には録音することを伝えてから使ってください</small></span>
       </button>
+      <div class="note warn tab-warn" id="tabWarn" hidden role="alert"></div>
       <div class="opts">
         <input type="checkbox" id="srOn" checked hidden>
         <input type="checkbox" id="autoW" hidden>
@@ -423,16 +425,19 @@ async function start() {
   if (tabMode) {
     try {
       tabStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true, audio: { suppressLocalAudioPlayback: false },
+        video: true,
+        audio: { suppressLocalAudioPlayback: false, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         preferCurrentTab: false, selfBrowserSurface: 'exclude', surfaceSwitching: 'include', systemAudio: 'include',
       });
-    } catch {
-      toast('タブの共有がキャンセルされました。マイクだけで録るときは「相手の音声も録る」をオフにしてください。');
+    } catch (e) {
+      toast(e?.name === 'NotAllowedError'
+        ? 'タブの共有がキャンセルされました。マイクだけで録るときは「相手の音声も録る」をオフにしてください。'
+        : `タブを共有できませんでした（${e?.name || e}）。`);
       return;
     }
     if (!tabStream.getAudioTracks().length) {
       tabStream.getTracks().forEach(t => t.stop());
-      toast('音声が共有されませんでした。タブを選ぶ画面で「タブの音声も共有する」をオンにしてください。');
+      toast('音声が共有されませんでした。「Chromeタブ」を選び、「タブの音声も共有する」をオンにしてください（ウィンドウや画面全体では音が録れません）。');
       return;
     }
   }
@@ -446,26 +451,41 @@ async function start() {
   }
   try { await navigator.storage.persist(); } catch { }
 
-  // マイクとタブの音を1本にまとめる
-  const ctx = new AudioContext();
-  const analyser = ctx.createAnalyser();
-  analyser.fftSize = 1024;
-  const mix = ctx.createMediaStreamDestination();
-  for (const st of [micStream, tabStream]) {
-    if (!st) continue;
-    const src = ctx.createMediaStreamSource(new MediaStream(st.getAudioTracks()));
-    src.connect(mix); src.connect(analyser);
-  }
-  if (tabStream) {
-    tabStream.getAudioTracks()[0].addEventListener('ended', () => {
-      if (rec) toast('相手の音声の録音が止まりました（タブの共有が終了）。マイクの録音は続いています。');
-    });
-  }
-  const stream = mix.stream;
+  // マイクとタブの音を1本にまとめる（音割れを防ぐため軽く圧縮）
+  const sources = [micStream, tabStream].filter(Boolean);
+  let ctx, mr, tabAnalyser = null;
   const mime = pickMime();
-  const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+  try {
+    ctx = new AudioContext();
+    try { await ctx.resume(); } catch { }
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -6; comp.ratio.value = 8;
+    const mix = ctx.createMediaStreamDestination();
+    comp.connect(mix); comp.connect(analyser);
+    const add = (st, vol) => {
+      const g = ctx.createGain(); g.gain.value = vol;
+      ctx.createMediaStreamSource(new MediaStream(st.getAudioTracks())).connect(g);
+      g.connect(comp);
+      return g;
+    };
+    add(micStream, 1.0);
+    if (tabStream) {
+      tabAnalyser = ctx.createAnalyser(); tabAnalyser.fftSize = 1024;
+      add(tabStream, 0.85).connect(tabAnalyser);
+    }
+    ctx._analyser = analyser;
+    mr = new MediaRecorder(mix.stream, mime ? { mimeType: mime } : {});
+  } catch (e) {
+    sources.forEach(st => st.getTracks().forEach(t => t.stop()));
+    ctx?.close().catch(() => { });
+    toast(`録音を始められませんでした（${e?.message || e}）`);
+    return;
+  }
+  const analyser = ctx._analyser;
   const sid = `r${Date.now()}`;
-  rec = { sid, mr, stream, sources: [micStream, tabStream].filter(Boolean), tab: !!tabStream,
+  rec = { sid, mr, sources, tab: !!tabStream, tabAnalyser, tabHeardAt: null, tabLostAt: null,
           mime: mr.mimeType || mime, chunks: [], transcript: [], marks: [], lang: $('#lang').value,
           startedAt: Date.now(), before: 0, segStart: performance.now(), paused: false, srWanted: false, segT: null };
 
@@ -479,6 +499,7 @@ async function start() {
   saveLive();
 
   rec.ctx = ctx; rec.analyser = analyser; rec.levels = [];
+  if (tabStream) watchTab(tabStream);
 
   $('#liveBody').replaceChildren(); $('#interim').textContent = '';
   if ($('#srOn').checked) startSR(); else $('#srNote').textContent = '文字起こしはオフです。録音のみ保存します。あとから「高精度で文字起こし」もできます。';
@@ -521,11 +542,12 @@ function stop() {
 async function finalize() {
   const r = rec;
   r.sources.forEach(st => st.getTracks().forEach(t => t.stop()));
+  clearInterval(r.tabTimer); clearTabWarn();
   r.ctx.close().catch(() => { });
   try { await wakeLock?.release(); } catch { }
   wakeLock = null;
   const item = {
-    id: r.sid, title: `${fmtDate(r.startedAt)} の録音`, createdAt: r.startedAt, lang: r.lang, tab: r.tab,
+    id: r.sid, title: `${fmtDate(r.startedAt)} の録音`, createdAt: r.startedAt, lang: r.lang, tab: r.tab, tabLostAt: r.tabLostAt,
     duration: r.before, mime: r.mime, blob: new Blob(r.chunks, { type: r.mime }), transcript: r.transcript, marks: r.marks,
   };
   try {
@@ -541,10 +563,40 @@ async function finalize() {
   setUI(); await loadList(r.sid); updateStorage();
 }
 
+// 相手の音声の監視。会議中こえメモは裏のタブになるので、消えない警告とタブ名の⚠で知らせる
+function tabWarn(msg) {
+  $('#tabWarn').textContent = msg; $('#tabWarn').hidden = false;
+  if (!document.title.startsWith('⚠')) document.title = '⚠ ' + document.title;
+  toast(msg);
+}
+function watchTab(tabStream) {
+  const r = rec, buf = new Float32Array(1024);
+  tabStream.getAudioTracks()[0].addEventListener('ended', () => {
+    if (rec !== r || r.tabLostAt != null) return;
+    r.tabLostAt = elapsed(); saveLive();
+    tabWarn(`相手の音声が ${fmt(r.tabLostAt, false)} で止まりました（タブの共有が終了）。いまはマイクの音だけを録音しています。`);
+  });
+  r.tabTimer = setInterval(() => {
+    if (rec !== r) { clearInterval(r.tabTimer); return; }
+    if (r.paused || r.tabLostAt != null) return;
+    r.tabAnalyser.getFloatTimeDomainData(buf);
+    if (rms(buf) > 0.002) { r.tabHeardAt = elapsed(); if ($('#tabWarn').dataset.kind === 'silent') clearTabWarn(); return; }
+    const quiet = elapsed() - (r.tabHeardAt ?? 0);
+    if (quiet > 20000 && !$('#tabWarn').dataset.kind) {
+      $('#tabWarn').dataset.kind = 'silent';
+      tabWarn('共有したタブから音が来ていません。会議のタブを選んだか、相手が話しているかを確認してください。');
+    }
+  }, 500);
+}
+function clearTabWarn() {
+  $('#tabWarn').hidden = true; delete $('#tabWarn').dataset.kind;
+  document.title = document.title.replace(/^⚠ /, '');
+}
+
 function saveLive() {
   if (!rec) return;
-  const { sid, startedAt, mime, transcript, marks, lang } = rec;
-  tx('live', 'readwrite', s => s.put({ sid, startedAt, mime, transcript, marks, lang, elapsed: elapsed() })).catch(() => { });
+  const { sid, startedAt, mime, transcript, marks, lang, tab, tabLostAt } = rec;
+  tx('live', 'readwrite', s => s.put({ sid, startedAt, mime, transcript, marks, lang, tab, tabLostAt, elapsed: elapsed() })).catch(() => { });
 }
 
 // ---------- リアルタイム音声認識 ----------
@@ -1056,7 +1108,7 @@ function metaEl(r) {
     r.marks?.length ? el('span', { className: 'badge mark', textContent: `★ ${r.marks.length}` }) : null,
     r.recovered ? el('span', { className: 'badge', textContent: '復元' }) : null,
     r.imported ? el('span', { className: 'badge', textContent: '取り込み' }) : null,
-    r.tab ? el('span', { className: 'badge', textContent: '相手の音声あり' }) : null);
+    r.tab ? el('span', { className: 'badge', textContent: r.tabLostAt != null ? `相手の音声あり（${fmt(r.tabLostAt, false)}まで）` : '相手の音声あり' }) : null);
 }
 
 function itemEl(r, open) {
@@ -1336,7 +1388,7 @@ async function recover() {
       await putRec({
         id: l.sid, title: `${fmtDate(l.startedAt)} の録音（復元）`, createdAt: l.startedAt, lang: l.lang,
         duration: Math.max(l.elapsed || 0, chunks.length * TIMESLICE - TIMESLICE), mime: l.mime,
-        blob: new Blob(chunks.map(c => c.data), { type: l.mime }), transcript: l.transcript || [], marks: l.marks || [], recovered: true,
+        blob: new Blob(chunks.map(c => c.data), { type: l.mime }), transcript: l.transcript || [], marks: l.marks || [], recovered: true, tab: l.tab, tabLostAt: l.tabLostAt,
       });
       n++;
     }
@@ -1357,7 +1409,8 @@ if (MOBILE) {
   $('#mobileNote').hidden = false;
 }
 // ---------- 相手の音声(タブ)も録る ----------
-if (!MOBILE && navigator.mediaDevices?.getDisplayMedia) {
+const CHROMIUM = !!navigator.userAgentData?.brands?.some(b => /Chrom|Edge/i.test(b.brand));
+if (!MOBILE && CHROMIUM && navigator.mediaDevices?.getDisplayMedia) {
   $('#tabBtn').hidden = false;
   tabMode = prefGet('tabMode', '0') === '1';
   $('#tabBtn').setAttribute('aria-pressed', String(tabMode));
@@ -1365,7 +1418,7 @@ if (!MOBILE && navigator.mediaDevices?.getDisplayMedia) {
     tabMode = !tabMode;
     prefSet('tabMode', tabMode ? '1' : '0');
     $('#tabBtn').setAttribute('aria-pressed', String(tabMode));
-    if (tabMode) toast('録音開始を押すと、録りたいタブを選ぶ画面が出ます');
+    if (tabMode) toast('録音開始を押したら「Chromeタブ」から会議のタブを選び、「タブの音声も共有する」をオンにしてください');
   };
 }
 // ---------- 音声ファイルの取り込み ----------
