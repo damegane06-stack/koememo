@@ -500,6 +500,10 @@ async function start() {
 
   rec.ctx = ctx; rec.analyser = analyser; rec.levels = [];
   if (tabStream) watchTab(tabStream);
+  // Bluetoothイヤホンの電池切れ・接続切れなどでマイクが外れたら知らせる
+  micStream.getAudioTracks()[0].addEventListener('ended', () => {
+    if (rec && rec.sources[0] === micStream) tabWarn(`マイクが ${fmt(elapsed(), false)} で切断されました（イヤホンの接続が切れた可能性があります）。自分の声はこれ以降録音されていません。録音をいったん止めて、もう一度始めてください。`);
+  });
 
   $('#liveBody').replaceChildren(); $('#interim').textContent = '';
   if ($('#srOn').checked) startSR(); else $('#srNote').textContent = '文字起こしはオフです。録音のみ保存します。あとから「高精度で文字起こし」もできます。';
