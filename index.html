@@ -143,6 +143,16 @@ button.ts:hover { text-decoration: underline; }
 .edit:focus { background: var(--raised); box-shadow: 0 0 0 2px var(--accent); }
 .interim { color: var(--muted); font-style: italic; }
 
+/* 相手の音声スイッチ */
+.tab-toggle { display: flex; align-items: center; gap: 12px; text-align: left; border-radius: 12px; padding: 10px 14px; background: var(--raised); }
+.tab-toggle b { display: block; font-weight: 500; font-size: 14px; }
+.tab-toggle small { display: block; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.switch { flex: none; width: 36px; height: 20px; border-radius: 999px; background: var(--line); position: relative; transition: background .2s; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--raised); box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .2s; }
+.tab-toggle[aria-pressed="true"] { border-color: var(--accent); }
+.tab-toggle[aria-pressed="true"] .switch { background: var(--accent); }
+.tab-toggle[aria-pressed="true"] .switch::after { transform: translateX(16px); }
+
 /* 話者 */
 .txt { min-width: 0; overflow-wrap: anywhere; }
 select.spk { appearance: none; -webkit-appearance: none; field-sizing: content; border: 0; border-radius: 999px; padding: 0 9px; margin-right: 6px; font: inherit; font-size: 11.5px; font-weight: 500; line-height: 1.7; vertical-align: 1px; cursor: pointer; color: var(--c); background: color-mix(in srgb, var(--c) 15%, transparent); max-width: 9em; text-overflow: ellipsis; }
@@ -228,6 +238,10 @@ textarea.minutes { width: 100%; min-height: 280px; resize: vertical; font-size: 
         <button class="ctl rec-btn" id="recBtn"><span class="knob rec"><i></i></span><span id="recLabel">録音開始</span></button>
         <button class="ctl mark" id="markBtn" disabled title="キーボードの M でも付けられます"><span class="knob">★</span><span>しるし</span></button>
       </div>
+      <button class="tab-toggle" id="tabBtn" aria-pressed="false" hidden>
+        <span class="switch" aria-hidden="true"></span>
+        <span><b>相手の音声も録る</b><small>Chromeのタブ（Meet・ブラウザ版Zoomなど）の音を一緒に録音</small></span>
+      </button>
       <div class="opts">
         <input type="checkbox" id="srOn" checked hidden>
         <input type="checkbox" id="autoW" hidden>
@@ -284,6 +298,7 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 // スマホ・タブレットはメモリが少なく、ブラウザ内のAIで落ちやすいので重い処理を控える
 const MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
 const TIMESLICE = 5000;
+let tabMode = false;
 let db, rec = null, wakeLock = null, recordings = [], autoRunId = null;
 
 // ---------- IndexedDB ----------
@@ -403,18 +418,55 @@ function pickMime() {
 const elapsed = () => !rec ? 0 : rec.before + (rec.paused ? 0 : performance.now() - rec.segStart);
 
 async function start() {
-  let stream;
+  // タブの共有はクリック直後でないと許可されないので、マイクより先に聞く
+  let tabStream = null;
+  if (tabMode) {
+    try {
+      tabStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true, audio: { suppressLocalAudioPlayback: false },
+        preferCurrentTab: false, selfBrowserSurface: 'exclude', surfaceSwitching: 'include', systemAudio: 'include',
+      });
+    } catch {
+      toast('タブの共有がキャンセルされました。マイクだけで録るときは「相手の音声も録る」をオフにしてください。');
+      return;
+    }
+    if (!tabStream.getAudioTracks().length) {
+      tabStream.getTracks().forEach(t => t.stop());
+      toast('音声が共有されませんでした。タブを選ぶ画面で「タブの音声も共有する」をオンにしてください。');
+      return;
+    }
+  }
+  let micStream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
   } catch (e) {
+    tabStream?.getTracks().forEach(t => t.stop());
     toast('マイクを使えません。ブラウザでマイクの使用を許可してください。');
     return;
   }
   try { await navigator.storage.persist(); } catch { }
+
+  // マイクとタブの音を1本にまとめる
+  const ctx = new AudioContext();
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  const mix = ctx.createMediaStreamDestination();
+  for (const st of [micStream, tabStream]) {
+    if (!st) continue;
+    const src = ctx.createMediaStreamSource(new MediaStream(st.getAudioTracks()));
+    src.connect(mix); src.connect(analyser);
+  }
+  if (tabStream) {
+    tabStream.getAudioTracks()[0].addEventListener('ended', () => {
+      if (rec) toast('相手の音声の録音が止まりました（タブの共有が終了）。マイクの録音は続いています。');
+    });
+  }
+  const stream = mix.stream;
   const mime = pickMime();
   const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
   const sid = `r${Date.now()}`;
-  rec = { sid, mr, stream, mime: mr.mimeType || mime, chunks: [], transcript: [], marks: [], lang: $('#lang').value,
+  rec = { sid, mr, stream, sources: [micStream, tabStream].filter(Boolean), tab: !!tabStream,
+          mime: mr.mimeType || mime, chunks: [], transcript: [], marks: [], lang: $('#lang').value,
           startedAt: Date.now(), before: 0, segStart: performance.now(), paused: false, srWanted: false, segT: null };
 
   mr.ondataavailable = e => {
@@ -426,15 +478,11 @@ async function start() {
   mr.start(TIMESLICE);
   saveLive();
 
-  // レベルメーター
-  const ctx = new AudioContext();
-  const analyser = ctx.createAnalyser();
-  analyser.fftSize = 1024;
-  ctx.createMediaStreamSource(stream).connect(analyser);
   rec.ctx = ctx; rec.analyser = analyser; rec.levels = [];
 
   $('#liveBody').replaceChildren(); $('#interim').textContent = '';
   if ($('#srOn').checked) startSR(); else $('#srNote').textContent = '文字起こしはオフです。録音のみ保存します。あとから「高精度で文字起こし」もできます。';
+  if (tabStream && SR && rec.srWanted) $('#srNote').textContent = 'リアルタイム文字起こしに出るのは自分の声だけです。相手の声は、録音を止めたあとの高精度文字起こしで入ります。';
   try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { }
   setUI(); loop();
 }
@@ -472,12 +520,12 @@ function stop() {
 
 async function finalize() {
   const r = rec;
-  r.stream.getTracks().forEach(t => t.stop());
+  r.sources.forEach(st => st.getTracks().forEach(t => t.stop()));
   r.ctx.close().catch(() => { });
   try { await wakeLock?.release(); } catch { }
   wakeLock = null;
   const item = {
-    id: r.sid, title: `${fmtDate(r.startedAt)} の録音`, createdAt: r.startedAt, lang: r.lang,
+    id: r.sid, title: `${fmtDate(r.startedAt)} の録音`, createdAt: r.startedAt, lang: r.lang, tab: r.tab,
     duration: r.before, mime: r.mime, blob: new Blob(r.chunks, { type: r.mime }), transcript: r.transcript, marks: r.marks,
   };
   try {
@@ -937,7 +985,7 @@ function setUI() {
   $('#pauseBtn').disabled = !on;
   $('#markBtn').disabled = !on;
   $('#pauseLabel').textContent = rec?.paused ? '再開' : '一時停止';
-  $('#srOn').disabled = $('#lang').disabled = on;
+  $('#srOn').disabled = $('#lang').disabled = $('#tabBtn').disabled = on;
   const t = $('#tally');
   t.className = 'tally' + (on ? (rec.paused ? ' paused' : ' on') : '');
   $('#tallyText').textContent = on ? (rec.paused ? 'PAUSED' : 'REC') : 'STANDBY';
@@ -1007,7 +1055,8 @@ function metaEl(r) {
     r.minutes?.text ? el('span', { className: 'badge', textContent: '議事録あり' }) : null,
     r.marks?.length ? el('span', { className: 'badge mark', textContent: `★ ${r.marks.length}` }) : null,
     r.recovered ? el('span', { className: 'badge', textContent: '復元' }) : null,
-    r.imported ? el('span', { className: 'badge', textContent: '取り込み' }) : null);
+    r.imported ? el('span', { className: 'badge', textContent: '取り込み' }) : null,
+    r.tab ? el('span', { className: 'badge', textContent: '相手の音声あり' }) : null);
 }
 
 function itemEl(r, open) {
@@ -1306,6 +1355,18 @@ if (MOBILE) {
   document.querySelector('.voice').hidden = true;
   document.querySelector('.live .kbd')?.parentElement.replaceChildren('大事な場面では「★ しるし」を押してください。');
   $('#mobileNote').hidden = false;
+}
+// ---------- 相手の音声(タブ)も録る ----------
+if (!MOBILE && navigator.mediaDevices?.getDisplayMedia) {
+  $('#tabBtn').hidden = false;
+  tabMode = prefGet('tabMode', '0') === '1';
+  $('#tabBtn').setAttribute('aria-pressed', String(tabMode));
+  $('#tabBtn').onclick = () => {
+    tabMode = !tabMode;
+    prefSet('tabMode', tabMode ? '1' : '0');
+    $('#tabBtn').setAttribute('aria-pressed', String(tabMode));
+    if (tabMode) toast('録音開始を押すと、録りたいタブを選ぶ画面が出ます');
+  };
 }
 // ---------- 音声ファイルの取り込み ----------
 function mediaDuration(blob) {
